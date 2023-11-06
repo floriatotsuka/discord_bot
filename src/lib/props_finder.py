@@ -18,3 +18,11 @@ class PropsFinder:
     def is_voice_channel(message):
         """ テキストメッセージが発せられたチャンネルがボイスチャンネル """
         return message.channel.type is discord.ChannelType.voice
+    
+    def in_voice_channel(message):
+        """ テキストメッセージ発信者がボイスチャンネルのボイスチャットに参加しているか """
+        return message.author.voice is not None
+
+    def is_bot_in_voice_channel(message):
+        """ BOTがの椅子チャンネルに参加済みか """
+        return message.guild.voice_client is not None

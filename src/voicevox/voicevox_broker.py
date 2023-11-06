@@ -1,4 +1,6 @@
 import requests
+import os
+import random
 
 class VoicevoxBroker:
     """ Voicevox server broker """
@@ -17,6 +19,17 @@ class VoicevoxBroker:
         mora = self.__make_mora(message)
         return self.__speech_synthesis(mora)
 
+    def get_speach_file(self, message, *, filename='./test.wav'):
+        """ 音声ファイルを作成してファイル名を返す """
+        wav = self.get_speach(message)
+        filename = self.__make_audio_file(wav=wav, filename=filename)
+        return filename
+    
+    def cleanup_speach_file(self, filename):
+        # TODO:
+        os.remove(filename)
+        self.logger.debug(filename)
+
     def __make_mora(self, message):
         """ モーラの生成 """
         HEADER = {'accept': 'application/json'}
@@ -25,9 +38,9 @@ class VoicevoxBroker:
             'speaker' : str(VoicevoxBroker.SPEAKER)
         }
         url = self.VOICEVOX_ENDPOINT + '/audio_query'
-        res_mora = requests.post(url, params=payload, headers=HEADER)
+        res = requests.post(url, params=payload, headers=HEADER)
 
-        mora = res_mora.json()
+        mora = res.json()
         mora['speedScale'] = VoicevoxBroker.SPEED_SCALE
         mora['outputSamplingRate'] = VoicevoxBroker.SAMPLING_RATE
         mora['outputStereo'] = False
@@ -46,10 +59,14 @@ class VoicevoxBroker:
         }
         res = requests.post(url, params=payload, headers=HEADER, json=mora)
 
-        audio = None
+        wav = None
         if res.status_code == 200: # HTTP Status 200 OK
-            audio = res.content
-            with open('./test.wav', "wb") as file: #FIXME:
-                file.write(audio)
-            self.logger.debug("✅ audio file downloaded successfully.")
-        return audio
+            wav = res.content
+        return wav
+
+    def __make_audio_file(self, wav, filename):
+            """ 音声ファイルをファイルに書き出し、そのファイル名を返す。"""
+            with open(filename, "wb") as file:
+                file.write(wav)
+            self.logger.debug("audio file downloaded successfully.")
+            return filename
