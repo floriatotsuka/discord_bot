@@ -1,4 +1,4 @@
-CONNECT = '/join'
-DISCONNECT = '/bye'
+CONNECT = "/join"
+DISCONNECT = "/bye"
 
 LIST = [CONNECT, DISCONNECT]

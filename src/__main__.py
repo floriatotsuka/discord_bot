@@ -6,11 +6,11 @@ import os
 import logging
 
 load_dotenv()
-DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
-VOICEVOX_ENDPOINT = os.environ['VOICEVOX_ENDPOINT']
+DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+VOICEVOX_ENDPOINT = os.environ["VOICEVOX_ENDPOINT"]
 
 logger = LocalLogger(level=logging.INFO)
-logger.info('RUN DISCORD BOT!!!')
+logger.info("RUN DISCORD BOT!!!")
 vvb = VoicevoxBroker(VOICEVOX_ENDPOINT, logger=logger)
 bot = BotHandler(discord_token=DISCORD_TOKEN, voice_speech_synthesis=vvb, logger=logger)
 bot.run()

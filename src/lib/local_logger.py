@@ -1,7 +1,7 @@
 from logging import getLogger, StreamHandler, config, INFO
 
-class LocalLogger:
 
+class LocalLogger:
     def __init__(self, *, level=INFO):
         logger = getLogger(__name__)
         handler = StreamHandler()
@@ -10,7 +10,7 @@ class LocalLogger:
         logger.addHandler(handler)
         logger.propagate = False
         self.logger = logger
-        self.logger.debug('setup LocalLogger')
+        self.logger.debug("setup LocalLogger")
 
     def debug(self, msg):
         self.logger.debug(msg)
@@ -26,4 +26,3 @@ class LocalLogger:
 
     def fatal(self, msg):
         self.logger.fatal(msg)
-
