@@ -32,35 +32,36 @@ class BotHandler:
             self.logger.info(
                 f'Message from {message.author}: "{message.content}" {message.channel}({message.channel.id})'
             )
-
+            # メッセージ送信者がBotならば無視
             if message.author.bot:
-                # メッセージ送信者がBotならば無視
                 return
 
-            if prop.is_voice_channel(message=message) and prop.in_voice_channel(
-                message=message
-            ):
-                # ボイスチャンネル向けの返答
+            if self.__is_message_by_voice_channel_participant(message=message):
+                # ボイスチャンネルからのメッセージ向けのアクション
                 await self.__reaction_speach_for_voice_ch(message=message)
-            else:
-                # テキストチャンネル向けの返答
+            elif self.__is_message_from_voice_channel(message=message) is False:
+                # テキストチャンネルからのメッセージ向けのアクション
                 await self.__reaction_message_for_txet_ch(message=message)
+            else:
+                self.logger.debug("ボイスチャンネルのボイスチャットに参加していないユーザのテキストメッセージ")
 
         # Discordサーバーへ接続
         client.run(self.token)
 
     async def __reaction_message_for_txet_ch(self, message):
-        """特定のキーワードに向けて情報を返す"""
+        """任意のコマンドに向けて情報を返す"""
         msg = prop.get_info(message=message)
         if msg != None:
             await message.channel.send(msg)
 
     async def __reaction_speach_for_voice_ch(self, message):
-        """ボイスチャンネルにスピーチ音声を返す"""
+        """ボイスチャンネルのメッセージに合わせてBOT操作かテキストを代弁する"""
         if message.content in COMMAND.LIST:
             await self.__command_control_on_voice_channel(message=message)
         else:
-            if prop.is_bot_in_voice_channel(message=message):  # TODO:　かつ該当チャンネルにいるのか
+            if self.__is_bot_joining_voice_channel(
+                message=message
+            ) and self.__is_sender_and_bot_in_same_voice_channel(message=message):
                 try:
                     fn = "./temp/" + str(message.id) + ".wav"
                     filename = self.vss.get_speach_file(message=message, filename=fn)
@@ -71,30 +72,62 @@ class BotHandler:
                 finally:
                     print("Clean up")
                     # self.vss.cleanup_speach_file(filename) TODO: play後に削除
-                self.logger.debug("speach reaction: OK")
+                self.logger.debug("BOTと同室のボイスチャンネルでのテキストメッセージ")
+            else:
+                self.logger.debug("BOTとは別室のボイスチャンネルでのテキストメッセージ")
 
     async def __command_control_on_voice_channel(self, message):
         """ボイスチャンネル中で有効な独自コマンドを処理する"""
         match message.content:
             case COMMAND.CONNECT:
-                if prop.is_bot_in_voice_channel(message=message):
-                    # TODO:　かつ該当チャンネルにはいない
-                    print("チャンネルを移動")
-                    # TODO: 該当チャンネルにすでにいる
-                    return
-                else:
-                    # ボイスチャンネルに接続する
+                if self.__is_bot_joining_voice_channel(message=message) is False:
+                    self.logger.debug(
+                        "BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/joinされた"
+                    )
                     try:
                         await message.author.voice.channel.connect()
                         await message.channel.send(MSG.CONNECTION_OK)
                     except discord.errors.ClientException:
                         await message.channel.send(MSG.CONNECTION_FAILED)
+                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
+                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/joinされた")
+                    await message.channel.send("すでに同じボイスチャンネルに居ますよ")
+                else:
+                    self.logger.debug("別室のボイスチャンネルのテキストチャットから/joinされた")
+                    await message.channel.send("別のボイスチャンネルでサポート中ですので開放されるまでお待ちください。")
+
             case COMMAND.DISCONNECT:
-                if prop.is_bot_in_voice_channel(
-                    message=message
-                ):  # TODO:　かつ該当チャンネルにいるのか
-                    # ボイスチャンネルを切断する
+                if self.__is_bot_joining_voice_channel(message=message) is False:
+                    self.logger.debug("BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/byeされた")
+                    await message.channel.send("もともとボイスチャンネルに参加していませんよ")
+                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
+                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/byeされた")
                     await message.guild.voice_client.disconnect()
-            # その他
+                else:
+                    self.logger.debug("別室のボイスチャンネルのテキストチャットから/byeされた")
             case _:
                 self.logger.warn("Unknown command")
+
+    def __is_message_from_voice_channel(self, message):
+        """テキストメッセージが発せられたチャンネルがボイスチャンネルか"""
+        return message.channel.type is discord.ChannelType.voice
+
+    def __is_sender_in_voice_channel(self, message):
+        """テキストメッセージ発信者がボイスチャンネルのボイスチャットに参加しているか"""
+        return message.author.voice is not None
+
+    def __is_sender_and_bot_in_same_voice_channel(self, message):
+        """テキストメッセージ発信者とBOTが同じボイスチャンネルに居るか"""
+        sender_ch = message.author.voice.channel.id
+        bot_ch = message.guild.voice_client.channel.id
+        return sender_ch is bot_ch
+
+    def __is_message_by_voice_channel_participant(self, message):
+        """テキストメッセージ発信者がボイスチャットに参加しており、そのテキストチャットからメッセージ発信したか"""
+        return self.__is_message_from_voice_channel(
+            message=message
+        ) and self.__is_sender_in_voice_channel(message=message)
+
+    def __is_bot_joining_voice_channel(self, message):
+        """BOTがボイスチャットに参加しているか"""
+        return message.guild.voice_client is not None
