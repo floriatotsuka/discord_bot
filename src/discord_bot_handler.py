@@ -3,7 +3,7 @@ from lib.props_finder import PropsFinder as prop
 import const.command as COMMAND
 import const.message as MSG
 
-# import asyncio
+import asyncio
 
 
 class BotHandler:
@@ -68,10 +68,17 @@ class BotHandler:
                     source = discord.PCMVolumeTransformer(
                         discord.FFmpegPCMAudio(filename)
                     )
+
                     message.guild.voice_client.play(source)
+                    timeout = 20
+                    while message.guild.voice_client.is_playing():
+                        if timeout > 0:
+                            timeout -= 1
+                            await asyncio.sleep(1)
+                        else:
+                            break
                 finally:
-                    print("Clean up")
-                    # self.vss.cleanup_speach_file(filename) TODO: play後に削除
+                    self.vss.cleanup_speach_file(filename)
                 self.logger.debug("BOTと同室のボイスチャンネルでのテキストメッセージ")
             else:
                 self.logger.debug("BOTとは別室のボイスチャンネルでのテキストメッセージ")
