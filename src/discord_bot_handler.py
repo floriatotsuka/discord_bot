@@ -45,6 +45,22 @@ class BotHandler:
             else:
                 self.logger.debug("ボイスチャンネルのボイスチャットに参加していないユーザのテキストメッセージ")
 
+        # チャンネル入退場時の処理
+        @client.event
+        async def on_voice_state_update(member, before, after):            
+            if before.channel != after.channel:
+                # 退室通知
+                if before.channel is not None:
+                    self.logger.debug( before.channel.name + " から、" + member.name + " が退場しました。")
+                # 入室通知
+                if after.channel is not None:
+                    self.logger.debug( after.channel.name + " に、" + member.name + " が参加しました。")
+
+            voice_state = member.guild.voice_client
+            if voice_state is not None:
+                if len(voice_state.channel.members) == 1:
+                    await voice_state.disconnect()
+
         # Discordサーバーへ接続
         client.run(self.token)
 
