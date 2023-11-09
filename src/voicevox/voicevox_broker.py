@@ -1,36 +1,41 @@
 import requests
 import os
-import random
+
+from const.config import VoicevoxBrokerConfig as CONFIG
+from const.config import HTTP_STATUS
+from const.message import VoicevoxBrokerMessage as MSG
+
+from dataclasses import dataclass
+from lib.local_logger import LocalLogger
 
 
+@dataclass
 class VoicevoxBroker:
     """Voicevox server broker"""
 
-    SPEED_SCALE = 1.3
-    SAMPLING_RATE = 16000
-    SPEAKER = 1  # is ずんだもん
+    VOICEVOX_ENDPOINT: str
+    logger: LocalLogger
 
-    def __init__(self, endpoint, logger):
-        self.VOICEVOX_ENDPOINT = endpoint
-        self.logger = logger
-        logger.debug("setup VoicevoxBroker")
+    SPEED_SCALE = CONFIG.SPEED_SCALE
+    SAMPLING_RATE = CONFIG.SAMPLING_RATE
+    SPEAKER = CONFIG.SPEAKER
+    STATUS = HTTP_STATUS
 
     def get_speach(self, message):
-        mora = self.__make_mora(message)
-        return self.__speech_synthesis(mora)
+        mora = self.__retrieve_mora(message)
+        return self.__retrieve_speech_signal(mora)
 
     def get_speach_file(self, message, *, filename="./test.wav"):
         """音声ファイルを作成してファイル名を返す"""
         wav = self.get_speach(message)
-        filename = self.__make_audio_file(wav=wav, filename=filename)
+        filename = self.__create_audio_file(wav=wav, filename=filename)
         return filename
 
-    def cleanup_speach_file(self, filename):
-        # TODO:
+    def remove_speach_file(self, filename):
         os.remove(filename)
         self.logger.debug(filename)
 
-    def __make_mora(self, message):
+    def __retrieve_mora(self, message):
         """モーラの生成"""
         HEADER = {"accept": "application/json"}
         payload = {"text": message.content, "speaker": str(VoicevoxBroker.SPEAKER)}
@@ -43,7 +48,7 @@ class VoicevoxBroker:
         mora["outputStereo"] = False
         return mora
 
-    def __speech_synthesis(self, mora):
+    def __retrieve_speech_signal(self, mora):
         """スピーチ音声の合成"""
         url = self.VOICEVOX_ENDPOINT + "/synthesis"
         HEADER = {"accept": "audio/wav", "Content-Type": "application/json"}
@@ -54,13 +59,13 @@ class VoicevoxBroker:
         res = requests.post(url, params=payload, headers=HEADER, json=mora)
 
         wav = None
-        if res.status_code == 200:  # HTTP Status 200 OK
+        if res.status_code == VoicevoxBroker.STATUS.OK:
             wav = res.content
         return wav
 
-    def __make_audio_file(self, wav, filename):
+    def __create_audio_file(self, wav, filename):
         """音声ファイルをファイルに書き出し、そのファイル名を返す。"""
         with open(filename, "wb") as file:
             file.write(wav)
-        self.logger.debug("audio file downloaded successfully.")
+        self.logger.debug(MSG.DEBUG_MAKE_WAV_OK)
         return filename

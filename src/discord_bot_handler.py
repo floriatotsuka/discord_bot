@@ -3,15 +3,18 @@ from lib.props_finder import PropsFinder as prop
 import const.command as COMMAND
 import const.message as MSG
 
+from dataclasses import dataclass
 import asyncio
 
+from voicevox.voicevox_broker import VoicevoxBroker
+from lib.local_logger import LocalLogger
 
+
+@dataclass
 class BotHandler:
-    def __init__(self, discord_token, voice_speech_synthesis, logger):
-        self.token = discord_token
-        self.vss = voice_speech_synthesis
-        self.logger = logger
-        self.logger.debug("init BotHandler")
+    token: str
+    vss: VoicevoxBroker
+    logger: LocalLogger
 
     def run(self):
         """Listen状態のサーバのリスナ定義"""
@@ -47,14 +50,18 @@ class BotHandler:
 
         # チャンネル入退場時の処理
         @client.event
-        async def on_voice_state_update(member, before, after):            
+        async def on_voice_state_update(member, before, after):
             if before.channel != after.channel:
                 # 退室通知
                 if before.channel is not None:
-                    self.logger.debug( before.channel.name + " から、" + member.name + " が退場しました。")
+                    self.logger.debug(
+                        before.channel.name + " から、" + member.name + " が退場しました。"
+                    )
                 # 入室通知
                 if after.channel is not None:
-                    self.logger.debug( after.channel.name + " に、" + member.name + " が参加しました。")
+                    self.logger.debug(
+                        after.channel.name + " に、" + member.name + " が参加しました。"
+                    )
 
             voice_state = member.guild.voice_client
             if voice_state is not None:
@@ -94,7 +101,7 @@ class BotHandler:
                         else:
                             break
                 finally:
-                    self.vss.cleanup_speach_file(filename)
+                    self.vss.remove_speach_file(filename)
                 self.logger.debug("BOTと同室のボイスチャンネルでのテキストメッセージ")
             else:
                 self.logger.debug("BOTとは別室のボイスチャンネルでのテキストメッセージ")

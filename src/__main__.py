@@ -4,13 +4,14 @@ from lib.local_logger import LocalLogger
 from dotenv import load_dotenv
 import os
 import logging
+from const.message import MainMessage as MSG
 
 load_dotenv()
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 VOICEVOX_ENDPOINT = os.environ["VOICEVOX_ENDPOINT"]
 
 logger = LocalLogger(level=logging.INFO)
-logger.info("RUN DISCORD BOT!!!")
-vvb = VoicevoxBroker(VOICEVOX_ENDPOINT, logger=logger)
-bot = BotHandler(discord_token=DISCORD_TOKEN, voice_speech_synthesis=vvb, logger=logger)
+logger.info(MSG.START_UP)
+vvb = VoicevoxBroker(VOICEVOX_ENDPOINT, logger)
+bot = BotHandler(DISCORD_TOKEN, vvb, logger)
 bot.run()

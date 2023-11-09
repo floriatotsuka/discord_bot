@@ -10,7 +10,6 @@ class LocalLogger:
         logger.addHandler(handler)
         logger.propagate = False
         self.logger = logger
-        self.logger.debug("setup LocalLogger")
 
     def debug(self, msg):
         self.logger.debug(msg)
