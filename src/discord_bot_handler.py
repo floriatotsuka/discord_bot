@@ -85,16 +85,39 @@ class BotHandler:
             if self.__is_bot_joining_voice_channel(
                 message=message
             ) and self.__is_sender_and_bot_in_same_voice_channel(message=message):
+                QUEUE_TIMEOUT = 120 # FIXME: 外部化
+                timeout = QUEUE_TIMEOUT
+
+                fn = "./temp/" + str(message.id) + ".wav"
                 try:
-                    fn = "./temp/" + str(message.id) + ".wav"
                     filename = self.vss.get_speach_file(message=message, filename=fn)
+                except:
+                    # APIコールかファイル生成がミスった
+                    self.vss.remove_speach_file(filename) # FIXME: あるかないかわからないがゴミは残さない
+                    return
+                finally:
+                    # なんにせよファイル生成は頑張った
+                    self.logger.debug("make file: " + filename)
+
+                # FIXME: 多分キューが必要
+                while message.guild.voice_client.is_playing():
+                    self.logger.debug("wait " + str(timeout) + ": " + filename)
+                    if timeout > 0:
+                        timeout -= 1
+                        await asyncio.sleep(1)
+                    else:
+                        break
+
+                try:
                     source = discord.PCMVolumeTransformer(
                         discord.FFmpegPCMAudio(filename)
                     )
 
                     message.guild.voice_client.play(source)
-                    timeout = 20
+                    SPEACH_ALLOWED_TIME = 60 # FIXME: 外部化
+                    timeout = SPEACH_ALLOWED_TIME
                     while message.guild.voice_client.is_playing():
+                        self.logger.debug("playing" + str(timeout) + ": " + filename)
                         if timeout > 0:
                             timeout -= 1
                             await asyncio.sleep(1)
