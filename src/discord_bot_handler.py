@@ -1,5 +1,7 @@
 import discord
 from lib.props_finder import PropsFinder as prop
+
+from const.config import DiscordBotConfig as CONFIG
 import const.command as COMMAND
 import const.message as MSG
 
@@ -85,15 +87,13 @@ class BotHandler:
             if self.__is_bot_joining_voice_channel(
                 message=message
             ) and self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                QUEUE_TIMEOUT = 120 # FIXME: 外部化
-                timeout = QUEUE_TIMEOUT
-
-                fn = "./temp/" + str(message.id) + ".wav"
+                waiting_limit = CONFIG.TIME_LIMIT_OF_WAITING
+                fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
                 try:
                     filename = self.vss.get_speach_file(message=message, filename=fn)
                 except:
-                    # APIコールかファイル生成がミスった
-                    self.vss.remove_speach_file(filename) # FIXME: あるかないかわからないがゴミは残さない
+                    # APIコールかファイル生成が失敗した
+                    self.vss.remove_speach_file(filename)  # FIXME: ゴミを残さない
                     return
                 finally:
                     # なんにせよファイル生成は頑張った
@@ -101,9 +101,11 @@ class BotHandler:
 
                 # FIXME: 多分キューが必要
                 while message.guild.voice_client.is_playing():
-                    self.logger.debug("wait " + str(timeout) + ": " + filename)
-                    if timeout > 0:
-                        timeout -= 1
+                    self.logger.debug(
+                        "wait limit (" + str(waiting_limit) + "): " + filename
+                    )
+                    if waiting_limit > 0:
+                        waiting_limit -= 1
                         await asyncio.sleep(1)
                     else:
                         break
@@ -114,12 +116,16 @@ class BotHandler:
                     )
 
                     message.guild.voice_client.play(source)
-                    SPEACH_ALLOWED_TIME = 60 # FIXME: 外部化
-                    timeout = SPEACH_ALLOWED_TIME
+                    speech_time_limit = CONFIG.SPEECH_ALLOWED_TIME
                     while message.guild.voice_client.is_playing():
-                        self.logger.debug("playing" + str(timeout) + ": " + filename)
-                        if timeout > 0:
-                            timeout -= 1
+                        self.logger.debug(
+                            "speech limit ()"
+                            + str(speech_time_limit)
+                            + "): "
+                            + filename
+                        )
+                        if speech_time_limit > 0:
+                            speech_time_limit -= 1
                             await asyncio.sleep(1)
                         else:
                             break
