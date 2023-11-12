@@ -146,6 +146,7 @@ class BotHandler:
                     try:
                         await message.author.voice.channel.connect()
                         await message.channel.send(MSG.CONNECTION_OK)
+                        _ = self.vss.get_speaker()  # wake up Cloud Run
                     except discord.errors.ClientException:
                         await message.channel.send(MSG.CONNECTION_FAILED)
                 elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
