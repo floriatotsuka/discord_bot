@@ -21,6 +21,9 @@ class VoicevoxBroker:
     SPEAKER = CONFIG.SPEAKER
     STATUS = HTTP_STATUS
 
+    def get_speaker(self):
+        return self.__get_speaker_list()
+
     def get_speach(self, message):
         mora = self.__retrieve_mora(message)
         return self.__retrieve_speech_signal(mora)
@@ -34,6 +37,12 @@ class VoicevoxBroker:
     def remove_speach_file(self, filename):
         os.remove(filename)
         self.logger.debug(filename)
+
+    def __get_speaker_list(self):
+        HEADER = {"accept": "application/json"}
+        url = self.VOICEVOX_ENDPOINT + "/speakers"
+        res = requests.get(url)
+        return res.text
 
     def __retrieve_mora(self, message):
         """モーラの生成"""
