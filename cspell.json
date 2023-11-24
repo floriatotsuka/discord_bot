@@ -1,0 +1,3 @@
+{
+    "ignoreWords": ["dotenv", "voicevox", "upspeak"]
+}

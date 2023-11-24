@@ -1,15 +1,19 @@
 import discord
+from discord import ChannelType
 from lib.props_finder import PropsFinder as prop
 
 from const.config import DiscordBotConfig as CONFIG
 import const.command as COMMAND
-import const.message as MSG
+from const.message import DiscordBotHandlerMessage as MSG
+from const.message import SystemMessage as SYS
 
 from dataclasses import dataclass
 import asyncio
 
 from voicevox.voicevox_broker import VoicevoxBroker
 from lib.local_logger import LocalLogger
+
+from discord_broker import DiscordBroker
 
 
 @dataclass
@@ -34,21 +38,28 @@ class BotHandler:
         # メッセージ受信時の処理
         @client.event
         async def on_message(message):
+            """Discordのメッセージが発生した時の処理
+
+            Args:
+                message (discord.Message): 入力メッセージ
+            """
             self.logger.info(
                 f'Message from {message.author}: "{message.content}" {message.channel}({message.channel.id})'
             )
+
             # メッセージ送信者がBotならば無視
-            if message.author.bot:
+            if self.__is_bot_message(message):
                 return
 
-            if self.__is_message_by_voice_channel_participant(message=message):
-                # ボイスチャンネルからのメッセージ向けのアクション
-                await self.__reaction_speach_for_voice_ch(message=message)
-            elif self.__is_message_from_voice_channel(message=message) is False:
-                # テキストチャンネルからのメッセージ向けのアクション
-                await self.__reaction_message_for_txet_ch(message=message)
-            else:
-                self.logger.debug("ボイスチャンネルのボイスチャットに参加していないユーザのテキストメッセージ")
+            match message.channel.type:
+                case ChannelType.text:
+                    await self.__text_channel_handler(message)
+                case ChannelType.voice:
+                    await self.__voice_channel_handler(message)
+                case _:
+                    self.logger.info(
+                        "Out-of-scope ChannelType :" + message.channel.type
+                    )
 
         # チャンネル入退場時の処理
         @client.event
@@ -73,27 +84,33 @@ class BotHandler:
         # Discordサーバーへ接続
         client.run(self.token)
 
-    async def __reaction_message_for_txet_ch(self, message):
-        """任意のコマンドに向けて情報を返す"""
-        msg = prop.get_info(message=message)
-        if msg != None:
-            await message.channel.send(msg)
+    def __is_bot_message(self, message):
+        """メッセージ発信元がBOTであるか(ラッパー)"""
+        return DiscordBroker.is_bot_message(message)
 
-    async def __reaction_speach_for_voice_ch(self, message):
+    async def __text_channel_handler(self, message):
+        """テキストチャンネル中でのやり取りハンドラ"""
+        if message.content in MSG.COMMAND_TO_MESSAGE.keys():
+            # コマンドを受信した場合の処理
+            await self.__command_control_on_text_channel(message)
+
+    async def __voice_channel_handler(self, message):
         """ボイスチャンネルのメッセージに合わせてBOT操作かテキストを代弁する"""
-        if message.content in COMMAND.LIST:
+        if message.content in COMMAND.FOR_TEXT_CHAT:
+            # コマンドを受信した場合の処理
             await self.__command_control_on_voice_channel(message=message)
         else:
-            if self.__is_bot_joining_voice_channel(
-                message=message
-            ) and self.__is_sender_and_bot_in_same_voice_channel(message=message):
+            # メッセージ(コマンド外)を受信した場合の処理
+            if DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
                 waiting_limit = CONFIG.TIME_LIMIT_OF_WAITING
                 fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
+                # ------------------------------
+
                 try:
-                    filename = self.vss.get_speach_file(message=message, filename=fn)
+                    filename = self.vss.get_speech_file(message=message, filename=fn)
                 except:
                     # APIコールかファイル生成が失敗した
-                    self.vss.remove_speach_file(filename)  # FIXME: ゴミを残さない
+                    self.vss.remove_speech_file(filename)  # FIXME: ゴミを残さない
                     return
                 finally:
                     # なんにせよファイル生成は頑張った
@@ -130,64 +147,52 @@ class BotHandler:
                         else:
                             break
                 finally:
-                    self.vss.remove_speach_file(filename)
-                self.logger.debug("BOTと同室のボイスチャンネルでのテキストメッセージ")
+                    self.vss.remove_speech_file(filename)
+                # ------------------------------
+                self.logger.debug(SYS.SENDER_AND_BOT_IN_SAME_VOICE_CHANNEL)
             else:
-                self.logger.debug("BOTとは別室のボイスチャンネルでのテキストメッセージ")
+                self.logger.debug(SYS.BOT_ARE_NOT_IN_SAME_VOICE_CHANNEL)
 
     async def __command_control_on_voice_channel(self, message):
         """ボイスチャンネル中で有効な独自コマンドを処理する"""
         match message.content:
             case COMMAND.CONNECT:
-                if self.__is_bot_joining_voice_channel(message=message) is False:
+                if DiscordBroker.is_bot_joining_voice_channel(message) is False:
                     self.logger.debug(
                         "BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/joinされた"
                     )
                     try:
-                        await message.author.voice.channel.connect()
-                        await message.channel.send(MSG.CONNECTION_OK)
-                        _ = self.vss.get_speaker()  # wake up Cloud Run
+                        await self.__join_voice_channel(message)
+                        _ = self.vss.get_speaker()  # pre-warming for Cloud Run
                     except discord.errors.ClientException:
                         await message.channel.send(MSG.CONNECTION_FAILED)
-                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/joinされた")
-                    await message.channel.send("すでに同じボイスチャンネルに居ますよ")
+                elif DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
+                    await message.channel.send(MSG.ALREADY_BOT_IN_SAME_VOICE_CHANNEL)
+                    self.logger.debug(SYS.ALREADY_BOT_IN_SAME_VOICE_CHANNEL)
                 else:
-                    self.logger.debug("別室のボイスチャンネルのテキストチャットから/joinされた")
-                    await message.channel.send("別のボイスチャンネルでサポート中ですので開放されるまでお待ちください。")
+                    await message.channel.send(
+                        MSG.JOIN_REQUEST_FROM_ANOTHER_VOICE_CHANNEL
+                    )
+                    self.logger.debug(SYS.JOIN_REQUEST_FROM_ANOTHER_VOICE_CHANNEL)
 
             case COMMAND.DISCONNECT:
-                if self.__is_bot_joining_voice_channel(message=message) is False:
-                    self.logger.debug("BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/byeされた")
+                if DiscordBroker.is_bot_joining_voice_channel(message) is False:
                     await message.channel.send("もともとボイスチャンネルに参加していませんよ")
-                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/byeされた")
+                    self.logger.debug("BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/byeされた")
+                elif DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
                     await message.guild.voice_client.disconnect()
+                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/byeされた")
                 else:
                     self.logger.debug("別室のボイスチャンネルのテキストチャットから/byeされた")
             case _:
                 self.logger.warn("Unknown command")
 
-    def __is_message_from_voice_channel(self, message):
-        """テキストメッセージが発せられたチャンネルがボイスチャンネルか"""
-        return message.channel.type is discord.ChannelType.voice
+    async def __join_voice_channel(self, message):
+        await message.author.voice.channel.connect()
+        await message.channel.send(MSG.CONNECTION_OK)
 
-    def __is_sender_in_voice_channel(self, message):
-        """テキストメッセージ発信者がボイスチャンネルのボイスチャットに参加しているか"""
-        return message.author.voice is not None
-
-    def __is_sender_and_bot_in_same_voice_channel(self, message):
-        """テキストメッセージ発信者とBOTが同じボイスチャンネルに居るか"""
-        sender_ch = message.author.voice.channel.id
-        bot_ch = message.guild.voice_client.channel.id
-        return sender_ch is bot_ch
-
-    def __is_message_by_voice_channel_participant(self, message):
-        """テキストメッセージ発信者がボイスチャットに参加しており、そのテキストチャットからメッセージ発信したか"""
-        return self.__is_message_from_voice_channel(
-            message=message
-        ) and self.__is_sender_in_voice_channel(message=message)
-
-    def __is_bot_joining_voice_channel(self, message):
-        """BOTがボイスチャットに参加しているか"""
-        return message.guild.voice_client is not None
+    async def __command_control_on_text_channel(self, message):
+        command = message.content
+        msg = MSG.COMMAND_TO_MESSAGE.get(command, None)
+        if msg != None:
+            await message.channel.send(msg)

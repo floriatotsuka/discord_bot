@@ -24,17 +24,17 @@ class VoicevoxBroker:
     def get_speaker(self):
         return self.__get_speaker_list()
 
-    def get_speach(self, message):
+    def get_speech(self, message):
         mora = self.__retrieve_mora(message)
         return self.__retrieve_speech_signal(mora)
 
-    def get_speach_file(self, message, *, filename="./test.wav"):
+    def get_speech_file(self, message, *, filename="./test.wav"):
         """音声ファイルを作成してファイル名を返す"""
-        wav = self.get_speach(message)
+        wav = self.get_speech(message)
         filename = self.__create_audio_file(wav=wav, filename=filename)
         return filename
 
-    def remove_speach_file(self, filename):
+    def remove_speech_file(self, filename):
         os.remove(filename)
         self.logger.debug(filename)
 
@@ -50,11 +50,7 @@ class VoicevoxBroker:
         payload = {"text": message.content, "speaker": str(VoicevoxBroker.SPEAKER)}
         url = self.VOICEVOX_ENDPOINT + "/audio_query"
         res = requests.post(url, params=payload, headers=HEADER)
-
         mora = res.json()
-        mora["speedScale"] = VoicevoxBroker.SPEED_SCALE
-        mora["outputSamplingRate"] = VoicevoxBroker.SAMPLING_RATE
-        mora["outputStereo"] = False
         return mora
 
     def __retrieve_speech_signal(self, mora):
@@ -65,6 +61,9 @@ class VoicevoxBroker:
             "speaker": str(VoicevoxBroker.SPEAKER),
             "enable_interrogative_upspeak": "true",
         }
+        mora["speedScale"] = VoicevoxBroker.SPEED_SCALE
+        mora["outputSamplingRate"] = VoicevoxBroker.SAMPLING_RATE
+        mora["outputStereo"] = False
         res = requests.post(url, params=payload, headers=HEADER, json=mora)
 
         wav = None
