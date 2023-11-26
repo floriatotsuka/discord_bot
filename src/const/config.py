@@ -10,5 +10,13 @@ class DiscordBotConfig:
     SPEECH_ALLOWED_TIME = 60
 
 
+class LocalLoggerConfig:
+    FORMAT = "%(asctime)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s"
+
+
+class EnvironmentType:
+    PRODUCTION = "production"
+
+
 class HTTP_STATUS:
     OK = 200

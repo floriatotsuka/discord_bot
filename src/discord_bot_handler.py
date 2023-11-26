@@ -1,6 +1,6 @@
 import discord
 from discord import ChannelType
-from lib.props_finder import PropsFinder as prop
+import os
 
 from const.config import DiscordBotConfig as CONFIG
 import const.command as COMMAND
@@ -8,19 +8,23 @@ from const.message import DiscordBotHandlerMessage as MSG
 from const.message import SystemMessage as SYS
 
 from dataclasses import dataclass
+from collections import defaultdict, deque
 import asyncio
 
 from voicevox.voicevox_broker import VoicevoxBroker
-from lib.local_logger import LocalLogger
-
 from discord_broker import DiscordBroker
+
+# from lib.local_logger import LocalLogger
+from logging import Logger
 
 
 @dataclass
 class BotHandler:
     token: str
     vss: VoicevoxBroker
-    logger: LocalLogger
+    logger: Logger
+
+    all_queue_dict = defaultdict(deque)
 
     def run(self):
         """Listen状態のサーバのリスナ定義"""
@@ -100,55 +104,9 @@ class BotHandler:
             # コマンドを受信した場合の処理
             await self.__command_control_on_voice_channel(message=message)
         else:
-            # メッセージ(コマンド外)を受信した場合の処理
+            # コマンド外のメッセージを受信した場合の処理
             if DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
-                waiting_limit = CONFIG.TIME_LIMIT_OF_WAITING
-                fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
-                # ------------------------------
-
-                try:
-                    filename = self.vss.get_speech_file(message=message, filename=fn)
-                except:
-                    # APIコールかファイル生成が失敗した
-                    self.vss.remove_speech_file(filename)  # FIXME: ゴミを残さない
-                    return
-                finally:
-                    # なんにせよファイル生成は頑張った
-                    self.logger.debug("make file: " + filename)
-
-                # FIXME: 多分キューが必要
-                while message.guild.voice_client.is_playing():
-                    self.logger.debug(
-                        "wait limit (" + str(waiting_limit) + "): " + filename
-                    )
-                    if waiting_limit > 0:
-                        waiting_limit -= 1
-                        await asyncio.sleep(1)
-                    else:
-                        break
-
-                try:
-                    source = discord.PCMVolumeTransformer(
-                        discord.FFmpegPCMAudio(filename)
-                    )
-
-                    message.guild.voice_client.play(source)
-                    speech_time_limit = CONFIG.SPEECH_ALLOWED_TIME
-                    while message.guild.voice_client.is_playing():
-                        self.logger.debug(
-                            "speech limit ()"
-                            + str(speech_time_limit)
-                            + "): "
-                            + filename
-                        )
-                        if speech_time_limit > 0:
-                            speech_time_limit -= 1
-                            await asyncio.sleep(1)
-                        else:
-                            break
-                finally:
-                    self.vss.remove_speech_file(filename)
-                # ------------------------------
+                await self.__text_to_speech(message)
                 self.logger.debug(SYS.SENDER_AND_BOT_IN_SAME_VOICE_CHANNEL)
             else:
                 self.logger.debug(SYS.BOT_ARE_NOT_IN_SAME_VOICE_CHANNEL)
@@ -185,7 +143,7 @@ class BotHandler:
                 else:
                     self.logger.debug("別室のボイスチャンネルのテキストチャットから/byeされた")
             case _:
-                self.logger.warn("Unknown command")
+                self.logger.warn("Unknown command: " + message.content)
 
     async def __join_voice_channel(self, message):
         await message.author.voice.channel.connect()
@@ -196,3 +154,31 @@ class BotHandler:
         msg = MSG.COMMAND_TO_MESSAGE.get(command, None)
         if msg != None:
             await message.channel.send(msg)
+
+    async def __text_to_speech(self, message):
+        guild_queue = self.all_queue_dict[message.guild.id]
+        fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
+        try:
+            filename = self.vss.get_speech_file(message, filename=fn)
+            guild_queue.append(
+                discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(filename))
+            )
+            self.logger.debug("make file: " + filename)
+        except:
+            self.logger.error("Data operation failed: " + fn)
+            self.vss.remove_speech_file(filename)  # FIXME:ファイルが消せていない
+        finally:
+            if not message.guild.voice_client.is_playing():
+                self.__speech(message.guild.voice_client, guild_queue)
+                await asyncio.sleep(30)  # FIXME: なぞ　消し忘れが起きそうなのに…
+                os.remove(filename)
+
+    def __speech(self, voice_client, queue):
+        """音声再生する
+        voice_client: ギルドに応じた音声クライアント
+        queue: ギルド毎のキュー(中身はdiscord.AudioSource)
+        任意のギルドのキューと対応するsourceがセットでコールされる"""
+        if not queue or voice_client.is_playing():
+            return
+        source = queue.popleft()
+        voice_client.play(source, after=lambda e: self.__speech(voice_client, queue))

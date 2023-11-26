@@ -6,7 +6,10 @@ from const.config import HTTP_STATUS
 from const.message import VoicevoxBrokerMessage as MSG
 
 from dataclasses import dataclass
-from lib.local_logger import LocalLogger
+
+# from lib.local_logger import LocalLogger
+
+from logging import Logger
 
 
 @dataclass
@@ -14,7 +17,7 @@ class VoicevoxBroker:
     """Voicevox server broker"""
 
     VOICEVOX_ENDPOINT: str
-    logger: LocalLogger
+    logger: Logger
 
     SPEED_SCALE = CONFIG.SPEED_SCALE
     SAMPLING_RATE = CONFIG.SAMPLING_RATE
