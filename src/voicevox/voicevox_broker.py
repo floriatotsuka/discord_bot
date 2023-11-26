@@ -7,8 +7,6 @@ from const.message import VoicevoxBrokerMessage as MSG
 
 from dataclasses import dataclass
 
-# from lib.local_logger import LocalLogger
-
 from logging import Logger
 
 

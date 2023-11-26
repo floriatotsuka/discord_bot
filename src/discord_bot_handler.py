@@ -13,8 +13,6 @@ import asyncio
 
 from voicevox.voicevox_broker import VoicevoxBroker
 from discord_broker import DiscordBroker
-
-# from lib.local_logger import LocalLogger
 from logging import Logger
 
 
