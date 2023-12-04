@@ -1,22 +1,29 @@
 import discord
-from lib.props_finder import PropsFinder as prop
+from discord import ChannelType
+import os
 
 from const.config import DiscordBotConfig as CONFIG
 import const.command as COMMAND
-import const.message as MSG
+from const.message import DiscordBotHandlerMessage as MSG
+from const.message import SystemMessage as SYS
 
 from dataclasses import dataclass
+from collections import defaultdict, deque
 import asyncio
 
 from voicevox.voicevox_broker import VoicevoxBroker
-from lib.local_logger import LocalLogger
+from discord_broker import DiscordBroker
+from logging import Logger
 
 
 @dataclass
 class BotHandler:
     token: str
     vss: VoicevoxBroker
-    logger: LocalLogger
+    logger: Logger
+
+    all_queue_dict = defaultdict(deque)
+    audio_file_dict = defaultdict(deque)
 
     def run(self):
         """Listen状態のサーバのリスナ定義"""
@@ -34,21 +41,28 @@ class BotHandler:
         # メッセージ受信時の処理
         @client.event
         async def on_message(message):
+            """Discordのメッセージが発生した時の処理
+
+            Args:
+                message (discord.Message): 入力メッセージ
+            """
             self.logger.info(
                 f'Message from {message.author}: "{message.content}" {message.channel}({message.channel.id})'
             )
-            # メッセージ送信者がBotならば無視
-            if message.author.bot:
+
+            # Botが発信したテキストメッセージを無視する
+            if self.__is_bot_message(message):
                 return
 
-            if self.__is_message_by_voice_channel_participant(message=message):
-                # ボイスチャンネルからのメッセージ向けのアクション
-                await self.__reaction_speach_for_voice_ch(message=message)
-            elif self.__is_message_from_voice_channel(message=message) is False:
-                # テキストチャンネルからのメッセージ向けのアクション
-                await self.__reaction_message_for_txet_ch(message=message)
-            else:
-                self.logger.debug("ボイスチャンネルのボイスチャットに参加していないユーザのテキストメッセージ")
+            match message.channel.type:
+                case ChannelType.text:
+                    await self.__text_channel_handler(message)
+                case ChannelType.voice:
+                    await self.__voice_channel_handler(message)
+                case _:
+                    self.logger.info(
+                        "Out-of-scope ChannelType :" + message.channel.type
+                    )
 
         # チャンネル入退場時の処理
         @client.event
@@ -73,121 +87,127 @@ class BotHandler:
         # Discordサーバーへ接続
         client.run(self.token)
 
-    async def __reaction_message_for_txet_ch(self, message):
-        """任意のコマンドに向けて情報を返す"""
-        msg = prop.get_info(message=message)
-        if msg != None:
-            await message.channel.send(msg)
+    def __is_bot_message(self, message):
+        """メッセージ発信元がBOTであるか(ラッパー)"""
+        return DiscordBroker.is_bot_message(message)
 
-    async def __reaction_speach_for_voice_ch(self, message):
+    async def __text_channel_handler(self, message):
+        """テキストチャンネル中でのやり取りハンドラ"""
+        if message.content in MSG.COMMAND_TO_MESSAGE.keys():
+            # コマンドを受信した場合の処理
+            await self.__command_control_on_text_channel(message)
+
+    async def __voice_channel_handler(self, message):
         """ボイスチャンネルのメッセージに合わせてBOT操作かテキストを代弁する"""
-        if message.content in COMMAND.LIST:
+        if message.content in COMMAND.FOR_TEXT_CHAT:
+            # コマンドを受信した場合の処理
             await self.__command_control_on_voice_channel(message=message)
         else:
-            if self.__is_bot_joining_voice_channel(
-                message=message
-            ) and self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                waiting_limit = CONFIG.TIME_LIMIT_OF_WAITING
-                fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
-                try:
-                    filename = self.vss.get_speach_file(message=message, filename=fn)
-                except:
-                    # APIコールかファイル生成が失敗した
-                    self.vss.remove_speach_file(filename)  # FIXME: ゴミを残さない
-                    return
-                finally:
-                    # なんにせよファイル生成は頑張った
-                    self.logger.debug("make file: " + filename)
-
-                # FIXME: 多分キューが必要
-                while message.guild.voice_client.is_playing():
-                    self.logger.debug(
-                        "wait limit (" + str(waiting_limit) + "): " + filename
-                    )
-                    if waiting_limit > 0:
-                        waiting_limit -= 1
-                        await asyncio.sleep(1)
-                    else:
-                        break
-
-                try:
-                    source = discord.PCMVolumeTransformer(
-                        discord.FFmpegPCMAudio(filename)
-                    )
-
-                    message.guild.voice_client.play(source)
-                    speech_time_limit = CONFIG.SPEECH_ALLOWED_TIME
-                    while message.guild.voice_client.is_playing():
-                        self.logger.debug(
-                            "speech limit ()"
-                            + str(speech_time_limit)
-                            + "): "
-                            + filename
-                        )
-                        if speech_time_limit > 0:
-                            speech_time_limit -= 1
-                            await asyncio.sleep(1)
-                        else:
-                            break
-                finally:
-                    self.vss.remove_speach_file(filename)
-                self.logger.debug("BOTと同室のボイスチャンネルでのテキストメッセージ")
+            # コマンド外のメッセージを受信した場合の処理
+            if DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
+                await self.__text_to_speech(message)
+                self.logger.debug(SYS.SENDER_AND_BOT_IN_SAME_VOICE_CHANNEL)
             else:
-                self.logger.debug("BOTとは別室のボイスチャンネルでのテキストメッセージ")
+                self.logger.debug(SYS.BOT_ARE_NOT_IN_SAME_VOICE_CHANNEL)
 
     async def __command_control_on_voice_channel(self, message):
         """ボイスチャンネル中で有効な独自コマンドを処理する"""
         match message.content:
             case COMMAND.CONNECT:
-                if self.__is_bot_joining_voice_channel(message=message) is False:
+                if DiscordBroker.is_bot_joining_voice_channel(message) is False:
                     self.logger.debug(
                         "BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/joinされた"
                     )
                     try:
-                        await message.author.voice.channel.connect()
-                        await message.channel.send(MSG.CONNECTION_OK)
-                        _ = self.vss.get_speaker()  # wake up Cloud Run
+                        await self.__join_voice_channel(message)
+                        _ = self.vss.get_speaker()  # pre-warming for Cloud Run
                     except discord.errors.ClientException:
                         await message.channel.send(MSG.CONNECTION_FAILED)
-                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/joinされた")
-                    await message.channel.send("すでに同じボイスチャンネルに居ますよ")
+                elif DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
+                    await message.channel.send(MSG.ALREADY_BOT_IN_SAME_VOICE_CHANNEL)
+                    self.logger.debug(SYS.ALREADY_BOT_IN_SAME_VOICE_CHANNEL)
                 else:
-                    self.logger.debug("別室のボイスチャンネルのテキストチャットから/joinされた")
-                    await message.channel.send("別のボイスチャンネルでサポート中ですので開放されるまでお待ちください。")
+                    await message.channel.send(
+                        MSG.JOIN_REQUEST_FROM_ANOTHER_VOICE_CHANNEL
+                    )
+                    self.logger.debug(SYS.JOIN_REQUEST_FROM_ANOTHER_VOICE_CHANNEL)
 
             case COMMAND.DISCONNECT:
-                if self.__is_bot_joining_voice_channel(message=message) is False:
-                    self.logger.debug("BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/byeされた")
+                if DiscordBroker.is_bot_joining_voice_channel(message) is False:
                     await message.channel.send("もともとボイスチャンネルに参加していませんよ")
-                elif self.__is_sender_and_bot_in_same_voice_channel(message=message):
-                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/byeされた")
+                    self.logger.debug("BOTがボイスチャンネルに参加していないがボイスチャンネルのテキストチャットから/byeされた")
+                elif DiscordBroker.is_sender_and_bot_in_same_voice_channel(message):
                     await message.guild.voice_client.disconnect()
+                    self.logger.debug("同室のボイスチャンネルのテキストチャットから/byeされた")
                 else:
                     self.logger.debug("別室のボイスチャンネルのテキストチャットから/byeされた")
             case _:
-                self.logger.warn("Unknown command")
+                self.logger.warn("Unknown command: " + message.content)
 
-    def __is_message_from_voice_channel(self, message):
-        """テキストメッセージが発せられたチャンネルがボイスチャンネルか"""
-        return message.channel.type is discord.ChannelType.voice
+    async def __join_voice_channel(self, message):
+        await message.author.voice.channel.connect()
+        await message.channel.send(MSG.CONNECTION_OK)
 
-    def __is_sender_in_voice_channel(self, message):
-        """テキストメッセージ発信者がボイスチャンネルのボイスチャットに参加しているか"""
-        return message.author.voice is not None
+    async def __command_control_on_text_channel(self, message):
+        command = message.content
+        msg = MSG.COMMAND_TO_MESSAGE.get(command, None)
+        if msg != None:
+            await message.channel.send(msg)
 
-    def __is_sender_and_bot_in_same_voice_channel(self, message):
-        """テキストメッセージ発信者とBOTが同じボイスチャンネルに居るか"""
-        sender_ch = message.author.voice.channel.id
-        bot_ch = message.guild.voice_client.channel.id
-        return sender_ch is bot_ch
+    async def __text_to_speech(self, message):
+        guild_queue = self.all_queue_dict[message.guild.id]
+        file_queue = self.audio_file_dict[message.guild.id]
+        fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
 
-    def __is_message_by_voice_channel_participant(self, message):
-        """テキストメッセージ発信者がボイスチャットに参加しており、そのテキストチャットからメッセージ発信したか"""
-        return self.__is_message_from_voice_channel(
-            message=message
-        ) and self.__is_sender_in_voice_channel(message=message)
+        # 音声ファイル作成する(ライブラリ内でffmpegを利用しているためファイル化する必要があるため)
+        try:
+            _ = self.vss.get_speech_file(message, filename=fn)
+            guild_queue.append(
+                {
+                    "audio": discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(fn)),
+                    "file": fn,
+                }
+            )
+            self.logger.debug("Make speech file: " + fn)
+        except:
+            self.logger.error("File operation failed: " + fn)
+        finally:
+            self.logger.info("voice file created: " + fn)
 
-    def __is_bot_joining_voice_channel(self, message):
-        """BOTがボイスチャットに参加しているか"""
-        return message.guild.voice_client is not None
+        # 音声ファイル再生と再生後の削除
+        try:
+            _ = self.__speech(message.guild.voice_client, guild_queue, file_queue)
+        except:
+            self.logger.error("Speech operation failed: " + fn)
+        finally:
+            self.logger.info("Speech operation completed: " + fn)
+
+    def __speech(self, voice_client, queue, files):
+        """音声再生する
+        voice_client: ギルドに応じた音声クライアント
+        queue: ギルド毎のキュー(中身はdiscord.AudioSourceと元ファイル名)
+        files: スピーチ済みのファイルリスト
+        任意のギルドの音声キューと対応するデータ削除用filesのセットでコールされる"""
+        if voice_client.is_playing():
+            # スピーチ中に付き保留
+            return False
+        if not queue and not files:
+            # 通常終了
+            return True
+        if not queue and files:
+            # ファイルを消す
+            self.__delete_audio_files(files)
+            return False
+
+        source = queue.popleft()
+        files.append(source["file"])
+        voice_client.play(
+            source["audio"], after=lambda e: self.__speech(voice_client, queue, files)
+        )
+        return False
+
+    def __delete_audio_files(self, queue):
+        while queue:
+            self.logger.debug(queue)
+            os.remove(queue.popleft())
+        return True
