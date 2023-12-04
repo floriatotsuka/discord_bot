@@ -26,6 +26,7 @@ class VoicevoxBroker:
         return self.__get_speaker_list()
 
     def get_speech(self, message):
+        """テキストメッセージからモーラを経て音声バイナリを取得する"""
         mora = self.__retrieve_mora(message)
         return self.__retrieve_speech_signal(mora)
 
@@ -34,10 +35,6 @@ class VoicevoxBroker:
         wav = self.get_speech(message)
         filename = self.__create_audio_file(wav=wav, filename=filename)
         return filename
-
-    def remove_speech_file(self, filename):
-        os.remove(filename)
-        self.logger.debug(filename)
 
     def __get_speaker_list(self):
         HEADER = {"accept": "application/json"}

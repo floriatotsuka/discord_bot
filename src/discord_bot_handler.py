@@ -23,6 +23,7 @@ class BotHandler:
     logger: Logger
 
     all_queue_dict = defaultdict(deque)
+    audio_file_dict = defaultdict(deque)
 
     def run(self):
         """Listen状態のサーバのリスナ定義"""
@@ -49,7 +50,7 @@ class BotHandler:
                 f'Message from {message.author}: "{message.content}" {message.channel}({message.channel.id})'
             )
 
-            # メッセージ送信者がBotならば無視
+            # Botが発信したテキストメッセージを無視する
             if self.__is_bot_message(message):
                 return
 
@@ -155,28 +156,58 @@ class BotHandler:
 
     async def __text_to_speech(self, message):
         guild_queue = self.all_queue_dict[message.guild.id]
+        file_queue = self.audio_file_dict[message.guild.id]
         fn = CONFIG.SPEECH_FILE_ROOT + str(message.id) + ".wav"
-        try:
-            filename = self.vss.get_speech_file(message, filename=fn)
-            guild_queue.append(
-                discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(filename))
-            )
-            self.logger.debug("make file: " + filename)
-        except:
-            self.logger.error("Data operation failed: " + fn)
-            self.vss.remove_speech_file(filename)  # FIXME:ファイルが消せていない
-        finally:
-            if not message.guild.voice_client.is_playing():
-                self.__speech(message.guild.voice_client, guild_queue)
-                await asyncio.sleep(30)  # FIXME: なぞ　消し忘れが起きそうなのに…
-                os.remove(filename)
 
-    def __speech(self, voice_client, queue):
+        # 音声ファイル作成する(ライブラリ内でffmpegを利用しているためファイル化する必要があるため)
+        try:
+            _ = self.vss.get_speech_file(message, filename=fn)
+            guild_queue.append(
+                {
+                    "audio": discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(fn)),
+                    "file": fn,
+                }
+            )
+            self.logger.debug("Make speech file: " + fn)
+        except:
+            self.logger.error("File operation failed: " + fn)
+        finally:
+            self.logger.info("voice file created: " + fn)
+
+        # 音声ファイル再生と再生後の削除
+        try:
+            _ = self.__speech(message.guild.voice_client, guild_queue, file_queue)
+        except:
+            self.logger.error("Speech operation failed: " + fn)
+        finally:
+            self.logger.info("Speech operation completed: " + fn)
+
+    def __speech(self, voice_client, queue, files):
         """音声再生する
         voice_client: ギルドに応じた音声クライアント
-        queue: ギルド毎のキュー(中身はdiscord.AudioSource)
-        任意のギルドのキューと対応するsourceがセットでコールされる"""
-        if not queue or voice_client.is_playing():
-            return
+        queue: ギルド毎のキュー(中身はdiscord.AudioSourceと元ファイル名)
+        files: スピーチ済みのファイルリスト
+        任意のギルドの音声キューと対応するデータ削除用filesのセットでコールされる"""
+        if voice_client.is_playing():
+            # スピーチ中に付き保留
+            return False
+        if not queue and not files:
+            # 通常終了
+            return True
+        if not queue and files:
+            # ファイルを消す
+            self.__delete_audio_files(files)
+            return False
+
         source = queue.popleft()
-        voice_client.play(source, after=lambda e: self.__speech(voice_client, queue))
+        files.append(source["file"])
+        voice_client.play(
+            source["audio"], after=lambda e: self.__speech(voice_client, queue, files)
+        )
+        return False
+
+    def __delete_audio_files(self, queue):
+        while queue:
+            self.logger.debug(queue)
+            os.remove(queue.popleft())
+        return True
